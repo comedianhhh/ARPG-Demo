@@ -25,7 +25,7 @@ Results & impact:
 - **Gameplay velocity**: Buff and Action systems enable adding new effects/moves with minimal engine changes
 - **Tooling integration**: Unity editor custom inspectors (rounded UI corners) and shader utilities for polished UI
 
-Add your numbers once measured:
+measured:
 - Concurrent sessions: `100 simulated headless clients @ 10 msgs/sec each (1,000 msgs/sec sustained)`
 - Server tick time: `1.8 - 3.5 ms @ 100 concurrent players (Tick interval: 20ms / 50Hz)`
 - Load time improvement: `-30% via pre-cached binary tables and multi-threaded config preloading`
