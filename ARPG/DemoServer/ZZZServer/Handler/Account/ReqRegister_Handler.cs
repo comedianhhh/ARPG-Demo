@@ -24,6 +24,20 @@ public class ReqRegister_Handler : RpcHandler<ReqRegister, RspRegister>
             return;
         }
 
+        if (DbMgr.IsMocked)
+        {
+            var existing = PlayerService.GetPlayerByUsername(username);
+            if (existing != null)
+            {
+                rsp.Result = new Result { Code = 3, Msg = "用户名已存在" };
+                return;
+            }
+            var mockPlayer = PlayerService.CreatePlayer(username, password);
+            PlayerService.RegisterMockPlayer(mockPlayer);
+            rsp.Result = new Result { Code = 0, Msg = "注册成功" };
+            return;
+        }
+
         var db = DbMgr.Database;
         var players = db.GetCollection<Player>("player");
         bool exist = players.Find(x => x.Username == username).Any();

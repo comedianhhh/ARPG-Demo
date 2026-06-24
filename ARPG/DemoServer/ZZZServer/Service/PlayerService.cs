@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using MongoDB.Driver;
 using Serilog;
 using ZZZServer.Model;
@@ -8,6 +8,17 @@ namespace ZZZServer.Service;
 public static class PlayerService
 {
     private static ConcurrentDictionary<string, Player> UidToPlayer { get; } = new();
+    private static ConcurrentDictionary<string, Player> UsernameToMockPlayer { get; } = new();
+
+    public static void RegisterMockPlayer(Player player)
+    {
+        if (string.IsNullOrEmpty(player.Uid))
+        {
+            player.Uid = Guid.NewGuid().ToString();
+        }
+        UidToPlayer[player.Uid] = player;
+        UsernameToMockPlayer[player.Username] = player;
+    }
 
     public static Player CreatePlayer(string username, string password)
     {
@@ -49,6 +60,11 @@ public static class PlayerService
     public static void SavePlayer(Player player)
     {
         Log.Debug("保存玩家 Uid: {PlayerUid}", player.Uid);
+        if (DbMgr.IsMocked)
+        {
+            // Already stored in local dict, nothing to write to DB
+            return;
+        }
         var db = DbMgr.Database;
         var players = db.GetCollection<Player>("player");
         players.ReplaceOne(
@@ -58,6 +74,12 @@ public static class PlayerService
 
     public static Player GetPlayerByUsername(string username)
     {
+        if (DbMgr.IsMocked)
+        {
+            UsernameToMockPlayer.TryGetValue(username, out var mockPlayer);
+            return mockPlayer;
+        }
+
         var players = DbMgr.Players;
         var player = players.Find(Builders<Player>.Filter.Eq(x => x.Username, username)).FirstOrDefault();
 
@@ -74,6 +96,10 @@ public static class PlayerService
     {
         return UidToPlayer.GetOrAdd(uid, key =>
         {
+            if (DbMgr.IsMocked)
+            {
+                return null;
+            }
             var players = DbMgr.Players;
             var player = players.Find(Builders<Player>.Filter.Eq(x => x.Uid, key)).FirstOrDefault();
             if (player != null)

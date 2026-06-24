@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -35,16 +35,26 @@ namespace Kirara.Network
             Task.Run(LoopCheckSessionTimeout);
             MyLog.Debug($"服务器启动, 监听在{endPoint}, 按C退出");
 
-            while (true)
+            if (Console.IsInputRedirected)
             {
-                var key = Console.ReadKey();
-                if (key.Key == ConsoleKey.C)
+                // Wait indefinitely without Console.ReadKey() if input is redirected (e.g. running in background/tests)
+                var tcs = new TaskCompletionSource();
+                AppDomain.CurrentDomain.ProcessExit += (s, e) => tcs.TrySetResult();
+                tcs.Task.Wait();
+            }
+            else
+            {
+                while (true)
                 {
-                    OnBeforeClose?.Invoke();
-                    Close();
-                    _isRunning = false;
-                    MyLog.Debug("服务器已停止");
-                    break;
+                    var key = Console.ReadKey();
+                    if (key.Key == ConsoleKey.C)
+                    {
+                        OnBeforeClose?.Invoke();
+                        Close();
+                        _isRunning = false;
+                        MyLog.Debug("服务器已停止");
+                        break;
+                    }
                 }
             }
         }
