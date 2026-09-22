@@ -25,10 +25,10 @@ Results & impact:
 - **Gameplay velocity**: Buff and Action systems enable adding new effects/moves with minimal engine changes
 - **Tooling integration**: Unity editor custom inspectors (rounded UI corners) and shader utilities for polished UI
 
-measured:
-- Concurrent sessions: `100 simulated headless clients @ 10 msgs/sec each (1,000 msgs/sec sustained)`
-- Server tick time: `1.8 - 3.5 ms @ 100 concurrent players (Tick interval: 20ms / 50Hz)`
-- Load time improvement: `-30% via pre-cached binary tables and multi-threaded config preloading`
+Measured with the bundled harness (details and how to reproduce in [Load Test Results](#load-test-results)):
+- **100 headless clients**, 10 movement msgs/sec each: **~1,000 msgs/sec in**, 50 Hz authority broadcast back to every client
+- **Server tick work: p50 ≈ 2.8 ms, p95 ≈ 3.3 ms, max 4.7 ms** against the 20 ms budget (was p50 ≈ 8.3 ms before the two broadcast fixes below)
+- **Fixed-point determinism**: 10,000-tick simulation hashes identically across runs, runtimes and — in CI — Windows x64, Linux x64 and macOS arm64
 
 ---
 
@@ -55,7 +55,7 @@ measured:
   - Handlers: `Handler/*` (Account, Role, Room, Chat, Quest, etc.)
   - Data/config: `ConfigTable/*` (codegen) + `Data/ConfigTableData/*`
   - Systems: `Navigation`, `Anim`, `Node`, `Service`, `LubanLib`, `Math`
-  - Automated Tests: `ZZZServer.Tests/` (Headless simulator project supporting account registry, login, sync tests)
+  - Automated Tests: `ZZZServer.Tests/` (headless bot load test, fixed-point determinism checks + cross-platform golden hash)
 
 - **Client (`DemoClient`)**
   - Lua gameplay layer: `Assets/LuaScripts/*` (Buffs, Panels, main)
@@ -79,7 +79,9 @@ measured:
 - **UI/UX**
   - Rounded corner UI components with editor tooling and SDF shaders for crisp visuals
 - **Test Automation**
-  - Headless test harness (`ZZZServer.Tests`) capable of simulating high concurrency logins, location sync, and network round-trip-time (RTT) benchmarks.
+  - Headless test harness (`ZZZServer.Tests`): N bots log in, send movement at 10 Hz and count the authority broadcasts they receive; the server's `--tick-stats` mode reports per-tick time by stage (input / sim / serialize / send) at p50/p95/p99/max.
+- **Determinism**
+  - 32.32 fixed-point type (`ZZZServer/Math/FixedPoint.cs`) with 128-bit intermediates for multiply/divide, a fixed-iteration integer sqrt and an integer-only seeded RNG; a 10,000-tick simulation is hashed and checked against a golden value on three platforms in CI.
 
 ---
 
@@ -134,15 +136,40 @@ dotnet run -- --bots 20 --duration 10
   - **Solution**: Luban codegen to C#, typed accessors, centralized `ConfigMgr`
 - **Problem**: Navigation performance on large maps
   - **Solution**: Native Recast interface with batched queries and simplified colliders
+- **Problem**: Load-test bots hung at login once more than one ran in a process
+  - **Solution**: RPC callbacks live in one process-wide map but sequence numbers were per session, so every bot's first call was seq 1 and they overwrote each other. Sequence numbers are now process-wide; all bots also share one message processor instead of one busy thread each.
+- **Problem**: Tick time at 100 players was 8.3 ms, mostly in broadcast
+  - **Solution**: Serialize each snapshot once and send each client one coalesced buffer per tick (see Load Test Results).
 - **Problem**: Database dependency issues during local performance test runs
   - **Solution**: Automatic database mocking fallback in `DbMgr` that turns on in-memory mock collection stores if no reachable MongoDB instance is detected, allowing tests to run anywhere out-of-the-box.
 
 ---
 
-## Measurable Outcomes
-- **Throughput**: 1,000 msgs/sec sustained (100 bots @ 10Hz tick); p95 handler latency < 2.5ms
-- **Iteration speed**: ~40% faster feature turnaround due to Lua + strongly-typed configs
-- **Stability**: Tested up to 2 hours of simulated bot movement with zero memory leaks and stable RTT
+## Load Test Results
+
+Measured 2026-09-22 on one machine (AMD Ryzen 9 9950X3D, 32 GB, Windows, .NET 8, server and bots on loopback).
+100 bots, 60 s per run. Each cell is the median across the run's steady-state 5-second windows (max = worst tick in the run). "Tick work" = time the tick thread spends per 20 ms tick:
+handling inbound messages + simulation + serializing + handing bytes to the sockets.
+
+| Server version | Tick work p50 | p95 | max | Biggest stage |
+|---|---|---|---|---|
+| Original broadcast (serialize per receiver, one send per message) | 8.3 ms | 10.0 ms | 13.9 ms | send 4.8 ms, serialize 3.5 ms |
+| Serialize each message once, reuse the bytes | 7.0 ms | 7.9 ms | 12.5 ms | send 6.9 ms |
+| **+ one coalesced send per client per tick** | **2.8 ms** | **3.3 ms** | **4.7 ms** | send 2.7 ms |
+
+Throughout: 1,000–1,060 msgs/sec in, 50.0 ticks/sec, 100/100 bots connected, ~90 MB/s out (every client
+receives the full 100-player state at 50 Hz — the next step would be deltas or interest management, not faster sockets).
+
+What the per-stage breakdown showed:
+- **Serialization was O(players²).** `Room.Broadcast` built the same snapshot once per receiver. Serializing once dropped that stage from 3.5 ms to 0.04 ms.
+- **Then the socket calls were the cost.** Two broadcasts per tick meant 200 `SendAsync` calls; putting both frames in one buffer per client halved the calls and took the tick from 7.0 ms to 2.8 ms.
+
+Reproduce:
+```bash
+cd ZZZServer && dotnet run -c Release -- --tick-stats        # prints a [tick] line every 5 s
+cd ZZZServer.Tests && dotnet run -c Release -- --bots 100 --duration 60
+cd ZZZServer.Tests && dotnet run -c Release -- --determinism-only   # fixed-point checks + golden hash
+```
 
 ---
 
@@ -154,8 +181,9 @@ dotnet run -- --bots 20 --duration 10
 
 ## What I’d Improve Next
 - ECS refactor for server-side simulation
-- Deterministic replay/rollback for authoritative combat using fixed-point math
-- CI/CD performance gates and automated regression testing
+- Move the combat simulation onto the fixed-point types and add replay/rollback on top of them
+- Run the load test in CI as a regression gate (determinism already runs on every push)
+- Delta snapshots or interest management — at 100 players the tick is now dominated by sending full state to everyone
 - Cross-platform client build targets (including mobile)
 - Packet loss injection testing in the Headless Test harness
 
