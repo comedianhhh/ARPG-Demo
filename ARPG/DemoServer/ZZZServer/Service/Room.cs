@@ -1,4 +1,5 @@
-﻿using Google.Protobuf;
+using System.Diagnostics;
+using Google.Protobuf;
 using Kirara.Network;
 using Mathd;
 using Serilog;
@@ -25,6 +26,7 @@ public class Room
 
     public void Update(float dt)
     {
+        long simStart = Stopwatch.GetTimestamp();
         foreach (var monster in Monsters)
         {
             monster.Update(dt);
@@ -32,11 +34,11 @@ public class Room
 
         notifyUpdateFromAuthority.Players.Clear();
         notifyUpdateFromAuthority.Players.AddRange(Players.Select(it => it.NSync));
-        Broadcast(notifyUpdateFromAuthority);
-
         notifyUpdateMonster.Monsters.Clear();
         notifyUpdateMonster.Monsters.AddRange(Monsters.Select(x => x.NSyncMonster));
-        Broadcast(notifyUpdateMonster);
+        if (TickStats.Enabled) TickStats.AddSim(Stopwatch.GetTimestamp() - simStart);
+
+        Broadcast(notifyUpdateFromAuthority, notifyUpdateMonster);
     }
 
     public void AddPlayer(Player player)
@@ -70,12 +72,50 @@ public class Room
         Broadcast(msg);
     }
 
-    public void Broadcast(IMessage msg)
+    /// <summary>
+    /// Serialize each message once and send every receiver one buffer holding all the frames back to back.
+    /// Serializing per receiver made the tick O(players²); one send per message doubled the socket calls.
+    /// Both showed up as the top stages in the tick breakdown at 100 players.
+    /// </summary>
+    public void Broadcast(params IMessage[] msgs)
     {
+        bool timed = TickStats.Enabled && TickStats.InUpdate;
+        long t0 = Stopwatch.GetTimestamp();
+        byte[] bytes = Frame(msgs);
+        long t1 = Stopwatch.GetTimestamp();
         foreach (var player in Players)
         {
-            player.Session.Send(msg);
+            player.Session.SendBytes(bytes);
         }
+        if (timed)
+        {
+            TickStats.AddSerialize(t1 - t0);
+            TickStats.AddSend(Stopwatch.GetTimestamp() - t1, bytes.Length * Players.Count);
+        }
+    }
+
+    private static byte[] Frame(IMessage[] msgs)
+    {
+        var frames = new byte[msgs.Length][];
+        int total = 0;
+        for (int i = 0; i < msgs.Length; i++)
+        {
+            if (!KiraraNetwork.MsgMeta.TryGetCmdId(msgs[i].GetType(), out uint cmdId))
+            {
+                throw new Exception($"{msgs[i].GetType().FullName}找不到CmdId");
+            }
+            frames[i] = MyProtocol.GetSendBytes(cmdId, 0, msgs[i]);
+            total += frames[i].Length;
+        }
+        if (frames.Length == 1) return frames[0];
+        var bytes = new byte[total];
+        int offset = 0;
+        foreach (var frame in frames)
+        {
+            Buffer.BlockCopy(frame, 0, bytes, offset, frame.Length);
+            offset += frame.Length;
+        }
+        return bytes;
     }
 
     public void BroadcastExcept(IMessage msg, Player except)

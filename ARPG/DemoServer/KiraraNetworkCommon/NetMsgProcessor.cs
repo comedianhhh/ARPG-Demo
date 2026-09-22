@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using Google.Protobuf;
 
@@ -59,8 +60,11 @@ namespace Kirara.Network
 
         private void Update()
         {
+            long inputStart = Stopwatch.GetTimestamp();
+            int msgCount = 0;
             while (queue.TryDequeue(out var item))
             {
+                msgCount++;
                 try
                 {
                     ProcessMsg(item.session, item.cmdId, item.rpcSeq, item.msg);
@@ -82,6 +86,10 @@ namespace Kirara.Network
                     MyLog.Error("处理任务异常 " + e);
                 }
             }
+            if (TickStats.Enabled && (msgCount > 0 || !taskQueue.IsEmpty))
+            {
+                TickStats.AddInput(Stopwatch.GetTimestamp() - inputStart, msgCount);
+            }
 
             // Tick驱动
             long currTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -93,6 +101,8 @@ namespace Kirara.Network
             {
                 while (currTime - prevTime >= interval)
                 {
+                    long updateStart = Stopwatch.GetTimestamp();
+                    TickStats.InUpdate = true;
                     foreach (var update in updates)
                     {
                         try
@@ -103,6 +113,11 @@ namespace Kirara.Network
                         {
                             MyLog.Error("Tick更新异常: " + e);
                         }
+                    }
+                    TickStats.InUpdate = false;
+                    if (TickStats.Enabled)
+                    {
+                        TickStats.EndTick(Stopwatch.GetTimestamp() - updateStart);
                     }
                     prevTime += interval;
                 }

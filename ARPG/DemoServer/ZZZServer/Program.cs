@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Kirara.Network;
 using Serilog;
 using ZZZServer.Anim;
@@ -9,8 +9,11 @@ namespace ZZZServer;
 
 internal static class Program
 {
-    private static void Main()
+    private static void Main(string[] args)
     {
+        TickStats.Enabled = args.Contains("--tick-stats") ||
+                            Environment.GetEnvironmentVariable("KIRARA_TICK_STATS") == "1";
+
         // 程序配置
         AppConfigMgr.Init("Data/App.toml");
 
