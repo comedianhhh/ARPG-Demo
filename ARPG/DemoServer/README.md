@@ -2,16 +2,6 @@
 
 A production-style multiplayer action RPG prototype consisting of a Unity client (C# + Lua) and a high-performance .NET game server. Built to explore end-to-end game development: real-time networking, deterministic data flow, navigation/physics, content tooling, and a modular gameplay system.
 
-## Demo Video
-
-<!-- Replace the src/poster with your actual assets or YouTube link below -->
-<video src="media/demo.mp4" controls playsinline muted poster="media/cover.jpg" style="max-width: 100%; height: auto;"></video>
-
-<!-- GitHub-friendly YouTube thumbnail link (iframes are not supported on GitHub) -->
-[![Watch the demo](https://img.youtube.com/vi/VIDEO_ID/hqdefault.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
-
----
-
 ## Features & Highlights
 - **Authoritative server** with custom lightweight networking (`KiraraNetwork`) and message routing
 - **Data-driven content** via generated config tables (Luban) and JSON payloads for rapid iteration
@@ -122,13 +112,6 @@ dotnet run -- --bots 20 --duration 10
 
 ---
 
-## Screenshots / Video
-- Gameplay GIF: `[drop here]`
-- Inspector & tooling: `[drop here]`
-- Navigation debug: `[drop here]`
-
----
-
 ## Challenges & Solutions
 - **Problem**: Keeping GC pressure low under high message throughput
   - **Solution**: Pre-allocated buffers (`MyBuffer`), value-type math libs, pooled message objects
@@ -201,6 +184,6 @@ If you’re a recruiter/engineer and want a quick tour, start with:
 ---
 
 ## Contact
-Happy to walk through the architecture or pair on a feature. Reach me at: `[your email/LinkedIn]`
+Happy to walk through the architecture or pair on a feature — reach me through my [GitHub profile](https://github.com/comedianhhh).
 
 
