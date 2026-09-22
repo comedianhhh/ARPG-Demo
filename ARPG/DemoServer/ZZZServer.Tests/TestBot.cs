@@ -24,7 +24,8 @@ namespace Kirara.Network
         public string Uid { get; private set; }
         public bool IsConnected { get; private set; }
         public float RttMs { get; private set; }
-        public int ReceivedBroadcastsCount { get; private set; }
+        public long SentMovementCount => Interlocked.Read(ref _sentMovement);
+        private long _sentMovement;
         public string ActiveRoleId { get; private set; }
 
         private Socket _socket;
@@ -34,11 +35,13 @@ namespace Kirara.Network
         private double _posX;
         private double _posZ;
 
-        public TestBot(string username, string password)
+        /// <param name="msgProcessor">Shared by every bot in the process. One processor = one busy tick thread;
+        /// a processor per bot would put 100 spinning threads on the machine and skew the server's numbers.</param>
+        public TestBot(string username, string password, NetMsgProcessor msgProcessor)
         {
             Username = username;
             Password = password;
-            _msgProcessor = new NetMsgProcessor();
+            _msgProcessor = msgProcessor;
         }
 
         public async Task<bool> ConnectAndLoginAsync(string ip, int port)
@@ -52,10 +55,6 @@ namespace Kirara.Network
 
                 // Start receive thread
                 _ = Task.Run(ReceiveLoopAsync);
-                _msgProcessor.Start();
-
-                // Setup local handlers or callbacks if needed
-                _msgProcessor.AddUpdate("Ping", dt => { });
 
                 // Register if account doesn't exist (we try registering, ignore failure code 3 which is "already exists")
                 var regReq = new ReqRegister { Username = Username, Password = Password };
@@ -157,13 +156,7 @@ namespace Kirara.Network
                 }
             };
             _session.Send(MsgCmdId.MsgUpdateFromAutonomous, movementMsg);
-        }
-
-        public void RegisterBroadcastHandler(Action<IMessage> handler)
-        {
-            // Subscribe to NetMsgProcessor to intercept notify/broadcasts
-            // For simple simulation, we'll override msgProcessor behavior, or hook updates
-            _msgProcessor.AddUpdate("AuthorityUpdateWatcher", dt => { });
+            Interlocked.Increment(ref _sentMovement);
         }
 
         private Task<T> CallAsync<T>(uint cmdId, IMessage msg) where T : IMessage, new()
@@ -201,7 +194,6 @@ namespace Kirara.Network
             IsConnected = false;
             _cts.Cancel();
             _session?.Close();
-            _msgProcessor?.Stop();
         }
     }
 }

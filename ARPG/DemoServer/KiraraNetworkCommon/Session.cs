@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Threading;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Google.Protobuf;
@@ -17,7 +18,9 @@ namespace Kirara.Network
 
         private readonly MyBuffer buffer = new(1024 * 1024);
 
-        private uint _rpcSeq;
+        // Process-wide: RpcCallbacks is a single static map, so sequence numbers must not repeat
+        // across sessions (a load test runs many client sessions in one process).
+        private static int _rpcSeq;
 
         public bool isClosed;
 
@@ -43,7 +46,7 @@ namespace Kirara.Network
 
         public void Call(uint cmdId, IMessage msg, Action<IMessage> callback)
         {
-            uint seq = ++_rpcSeq;
+            uint seq = (uint)Interlocked.Increment(ref _rpcSeq);
             KiraraNetwork.RpcCallbacks[seq] = callback;
             Send(cmdId, seq, msg);
         }
@@ -62,7 +65,21 @@ namespace Kirara.Network
         {
             byte[] sendBytes = MyProtocol.GetSendBytes(cmdId, rpcSeq, msg);
             // MyLog.Debug($"发送消息: CmdId: {cmdId}, RpcSeq: {rpcSeq}");
-            _socket.SendAsync(new ArraySegment<byte>(sendBytes), SocketFlags.None);
+            SendBytes(sendBytes);
+        }
+
+        /// <summary>Send an already-framed packet (lets a broadcast serialize once for every receiver).</summary>
+        public void SendBytes(byte[] sendBytes)
+        {
+            if (isClosed) return;
+            try
+            {
+                _socket.SendAsync(new ArraySegment<byte>(sendBytes), SocketFlags.None);
+            }
+            catch (ObjectDisposedException)
+            {
+                isClosed = true;
+            }
         }
 
         private static uint GetCmdId(IMessage msg)
