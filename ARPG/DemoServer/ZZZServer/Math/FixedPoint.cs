@@ -1,6 +1,6 @@
 using System;
 
-namespace ZZZServer.Math
+namespace ZZZServer.FixedMath
 {
     /// <summary>
     /// A deterministic 32.32 Fixed-Point math struct.
@@ -54,25 +54,58 @@ namespace ZZZServer.Math
 
         public static FixedPoint operator *(FixedPoint a, FixedPoint b)
         {
-            // (a * b) >> SHIFT without intermediate overflow using 128-bit math
-            // For safety in .NET:
-            long al = a.RawValue;
-            long bl = b.RawValue;
-            
-            // Approximate scaling for demonstration
-            return new FixedPoint { RawValue = (al >> 16) * (bl >> 16) };
+            // The 64x64 product needs 128 bits before the shift brings it back to 32.32;
+            // doing it in 64 bits overflows silently. Arithmetic shift = floor, same on every platform.
+            Int128 product = (Int128)a.RawValue * b.RawValue;
+            return new FixedPoint { RawValue = (long)(product >> SHIFT) };
         }
 
         public static FixedPoint operator /(FixedPoint a, FixedPoint b)
         {
             if (b.RawValue == 0) throw new DivideByZeroException();
-            return new FixedPoint { RawValue = (a.RawValue << 16) / (b.RawValue >> 16) };
+            Int128 numerator = (Int128)a.RawValue << SHIFT;
+            return new FixedPoint { RawValue = (long)(numerator / b.RawValue) };
         }
+
+        public static FixedPoint operator -(FixedPoint a) => new FixedPoint { RawValue = -a.RawValue };
+
+        /// <summary>
+        /// Integer square root of the 64.64 value (raw << 32), bit by bit. The loop always runs the same
+        /// number of iterations, so there's no data-dependent convergence test to diverge on.
+        /// Result is floor(sqrt), exact.
+        /// </summary>
+        public static FixedPoint Sqrt(FixedPoint a)
+        {
+            if (a.RawValue < 0) throw new ArgumentOutOfRangeException(nameof(a), "Sqrt of a negative value.");
+            UInt128 n = (UInt128)(ulong)a.RawValue << SHIFT;
+            UInt128 result = 0;
+            UInt128 bit = (UInt128)1 << 126;
+            for (int i = 0; i < 64; i++)
+            {
+                if (n >= result + bit)
+                {
+                    n -= result + bit;
+                    result = (result >> 1) + bit;
+                }
+                else
+                {
+                    result >>= 1;
+                }
+                bit >>= 2;
+            }
+            return new FixedPoint { RawValue = (long)result };
+        }
+
+        public static FixedPoint Abs(FixedPoint a) => a.RawValue < 0 ? -a : a;
+        public static FixedPoint Min(FixedPoint a, FixedPoint b) => a.RawValue <= b.RawValue ? a : b;
+        public static FixedPoint Max(FixedPoint a, FixedPoint b) => a.RawValue >= b.RawValue ? a : b;
 
         public static bool operator ==(FixedPoint a, FixedPoint b) => a.RawValue == b.RawValue;
         public static bool operator !=(FixedPoint a, FixedPoint b) => a.RawValue != b.RawValue;
         public static bool operator <(FixedPoint a, FixedPoint b) => a.RawValue < b.RawValue;
         public static bool operator >(FixedPoint a, FixedPoint b) => a.RawValue > b.RawValue;
+        public static bool operator <=(FixedPoint a, FixedPoint b) => a.RawValue <= b.RawValue;
+        public static bool operator >=(FixedPoint a, FixedPoint b) => a.RawValue >= b.RawValue;
 
         public bool Equals(FixedPoint other) => RawValue == other.RawValue;
         public override bool Equals(object obj) => obj is FixedPoint other && Equals(other);
@@ -146,11 +179,10 @@ namespace ZZZServer.Math
             return min + (int)(r % (uint)(max - min));
         }
 
+        /// <summary>Uniform in [0, 1). Integer-only: the 32 random bits become the fractional part directly.</summary>
         public FixedPoint NextFixedPoint()
         {
-            uint r = Next() & 0x7FFFFFFF;
-            double pct = (double)r / int.MaxValue;
-            return FixedPoint.FromDouble(pct);
+            return FixedPoint.FromRaw(Next());
         }
     }
 }
